@@ -19,12 +19,15 @@ package controller
 import (
 	"context"
 
+	appsv1 "k8s.io/api/apps/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	operatorv1alpha1 "github.com/example/nginx-operator/api/v1alpha1"
+	assets "github.com/example/nginx-operator/assets"
 )
 
 // NginxOperatorReconciler reconciles a NginxOperator object
@@ -47,9 +50,37 @@ type NginxOperatorReconciler struct {
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
 func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := log.FromContext(ctx)
+	operatorCR := &operatorv1alpha1.NginxOperator{}
+	err := r.Get(ctx, req.NamespacedName, operatorCR)
+	if err != nil && errors.IsNotFound(err) {
+		logger.Info("Operator resource object not found")
+		return ctrl.Result{}, nil
+	} else if err != nil {
+		logger.Error(err, "Error getting operator resource object")
+		return ctrl.Result{}, err
+	}
 
-	// TODO(user): your logic here
+	deployment := &appsv1.Deployment{}
+	err = r.Get(ctx, req.NamespacedName, deployment)
+	if err != nil && errors.IsNotFound(err) {
+		deployment.Namespace = req.Namespace
+		deployment.Name = req.Name
+
+		deploymentManifest := assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
+		deploymentManifest.Spec.Replicas = operatorCR.Spec.Replicas
+		deploymentManifest.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
+
+		err = r.Create(ctx, deploymentManifest)
+		if err != nil {
+			logger.Error(err, "Error creating Nginx deployment.")
+			return ctrl.Result{}, err
+		}
+
+	} else if err != nil {
+		logger.Error(err, "Error getting existing nginx deployment.")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }
