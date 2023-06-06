@@ -23,7 +23,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -55,50 +54,37 @@ type NginxOperatorReconciler struct {
 func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Retrieve the NginxOperator resource
 	operatorCR := &operatorv1alpha1.NginxOperator{}
 	err := r.Get(ctx, req.NamespacedName, operatorCR)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Operator resource object not found
-			logger.Info("Operator resource object not found")
-			return ctrl.Result{}, nil
-		}
-		// Error getting operator resource object
+	if err != nil && errors.IsNotFound(err) {
+		logger.Info("Operator resource object not found.")
+		return ctrl.Result{}, nil
+	} else if err != nil {
 		logger.Error(err, "Error getting operator resource object")
 		return ctrl.Result{}, err
 	}
 
-	// Retrieve or create the Nginx deployment
 	deployment := &appsv1.Deployment{}
 	create := false
 	err = r.Get(ctx, req.NamespacedName, deployment)
-	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create the deployment from file if not found
-			create = true
-			deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
-		} else {
-			// Error getting existing Nginx deployment
-			logger.Error(err, "Error getting existing Nginx deployment")
-			return ctrl.Result{}, err
-		}
+	if err != nil && errors.IsNotFound(err) {
+		create = true
+		deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
+	} else if err != nil {
+		logger.Error(err, "Error getting existing Nginx deployment.")
+		return ctrl.Result{}, err
 	}
 
-	// Set deployment fields
 	deployment.Namespace = req.Namespace
 	deployment.Name = req.Name
-	replicas := int32(5)
-	deployment.Spec.Replicas = pointer.Int32(replicas)
-	// if operatorCR.Spec.Replicas != nil {
-	// 	deployment.Spec.Replicas = operatorCR.Spec.Replicas
-	// }
+	if operatorCR.Spec.Replicas != nil {
+		deployment.Spec.Replicas = operatorCR.Spec.Replicas
+	}
 	if operatorCR.Spec.Port != nil {
 		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
 	}
 	ctrl.SetControllerReference(operatorCR, deployment, r.Scheme)
 
-	// Create or update the deployment
 	if create {
 		err = r.Create(ctx, deployment)
 	} else {
