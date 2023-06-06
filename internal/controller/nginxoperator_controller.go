@@ -20,6 +20,7 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -53,27 +54,37 @@ type NginxOperatorReconciler struct {
 func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
+	// Retrieve the NginxOperator resource
 	operatorCR := &operatorv1alpha1.NginxOperator{}
 	err := r.Get(ctx, req.NamespacedName, operatorCR)
-	if err != nil && errors.IsNotFound(err) {
-		logger.Info("Operator resource object not found")
-		return ctrl.Result{}, nil
-	} else if err != nil {
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Operator resource object not found
+			logger.Info("Operator resource object not found")
+			return ctrl.Result{}, nil
+		}
+		// Error getting operator resource object
 		logger.Error(err, "Error getting operator resource object")
 		return ctrl.Result{}, err
 	}
 
+	// Retrieve or create the Nginx deployment
 	deployment := &appsv1.Deployment{}
 	create := false
 	err = r.Get(ctx, req.NamespacedName, deployment)
-	if err != nil && errors.IsNotFound(err) {
-		create = true
-		deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
-	} else if err != nil {
-		logger.Error(err, "Error getting existing Nginx deployment.")
-		return ctrl.Result{}, err
+	if err != nil {
+		if errors.IsNotFound(err) {
+			// Create the deployment from file if not found
+			create = true
+			deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
+		} else {
+			// Error getting existing Nginx deployment
+			logger.Error(err, "Error getting existing Nginx deployment")
+			return ctrl.Result{}, err
+		}
 	}
 
+	// Set deployment fields
 	deployment.Namespace = req.Namespace
 	deployment.Name = req.Name
 	if operatorCR.Spec.Replicas != nil {
@@ -84,12 +95,45 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	ctrl.SetControllerReference(operatorCR, deployment, r.Scheme)
 
+	// Create or update the deployment
 	if create {
 		err = r.Create(ctx, deployment)
 	} else {
 		err = r.Update(ctx, deployment)
 	}
-	return ctrl.Result{}, err
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// List pods associated with the deployment
+	podList := &corev1.PodList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(req.Namespace),
+		client.MatchingLabels(deployment.Spec.Selector.MatchLabels),
+	}
+
+	if err := r.List(ctx, podList, listOpts...); err != nil {
+		logger.Error(err, "Error listing pods")
+		return ctrl.Result{}, err
+	}
+
+	// Update the NginxOperatorStatus.Nodes with the pod names
+	// Update the NginxOperatorStatus.Nodes with the names of active pods
+	activePods := make([]string, 0)
+	for _, pod := range podList.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			activePods = append(activePods, pod.Name)
+		}
+	}
+	operatorCR.Status.Nodes = activePods
+
+	// Update the NginxOperator status
+	if err := r.Status().Update(ctx, operatorCR); err != nil {
+		logger.Error(err, "Error updating NginxOperator status")
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

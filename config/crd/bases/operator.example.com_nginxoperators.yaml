@@ -50,6 +50,12 @@ spec:
             type: object
           status:
             description: NginxOperatorStatus defines the observed state of NginxOperator
+            properties:
+              nodes:
+                description: Get the name of the nodes created
+                items:
+                  type: string
+                type: array
             type: object
         type: object
     served: true
