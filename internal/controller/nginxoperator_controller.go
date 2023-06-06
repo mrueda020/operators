@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/pointer"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -87,9 +88,11 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Set deployment fields
 	deployment.Namespace = req.Namespace
 	deployment.Name = req.Name
-	if operatorCR.Spec.Replicas != nil {
-		deployment.Spec.Replicas = operatorCR.Spec.Replicas
-	}
+	replicas := int32(5)
+	deployment.Spec.Replicas = pointer.Int32(replicas)
+	// if operatorCR.Spec.Replicas != nil {
+	// 	deployment.Spec.Replicas = operatorCR.Spec.Replicas
+	// }
 	if operatorCR.Spec.Port != nil {
 		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
 	}
