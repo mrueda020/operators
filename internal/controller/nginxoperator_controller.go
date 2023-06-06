@@ -39,6 +39,7 @@ type NginxOperatorReconciler struct {
 //+kubebuilder:rbac:groups=operator.example.com,resources=nginxoperators,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=operator.example.com,resources=nginxoperators/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=operator.example.com,resources=nginxoperators/finalizers,verbs=update
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -51,6 +52,7 @@ type NginxOperatorReconciler struct {
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.14.1/pkg/reconcile
 func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
+
 	operatorCR := &operatorv1alpha1.NginxOperator{}
 	err := r.Get(ctx, req.NamespacedName, operatorCR)
 	if err != nil && errors.IsNotFound(err) {
@@ -62,32 +64,38 @@ func (r *NginxOperatorReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	deployment := &appsv1.Deployment{}
+	create := false
 	err = r.Get(ctx, req.NamespacedName, deployment)
 	if err != nil && errors.IsNotFound(err) {
-		deployment.Namespace = req.Namespace
-		deployment.Name = req.Name
-
-		deploymentManifest := assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
-		deploymentManifest.Spec.Replicas = operatorCR.Spec.Replicas
-		deploymentManifest.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
-
-		err = r.Create(ctx, deploymentManifest)
-		if err != nil {
-			logger.Error(err, "Error creating Nginx deployment.")
-			return ctrl.Result{}, err
-		}
-
+		create = true
+		deployment = assets.GetDeploymentFromFile("manifests/nginx_deployment.yaml")
 	} else if err != nil {
-		logger.Error(err, "Error getting existing nginx deployment.")
+		logger.Error(err, "Error getting existing Nginx deployment.")
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, nil
+	deployment.Namespace = req.Namespace
+	deployment.Name = req.Name
+	if operatorCR.Spec.Replicas != nil {
+		deployment.Spec.Replicas = operatorCR.Spec.Replicas
+	}
+	if operatorCR.Spec.Port != nil {
+		deployment.Spec.Template.Spec.Containers[0].Ports[0].ContainerPort = *operatorCR.Spec.Port
+	}
+	ctrl.SetControllerReference(operatorCR, deployment, r.Scheme)
+
+	if create {
+		err = r.Create(ctx, deployment)
+	} else {
+		err = r.Update(ctx, deployment)
+	}
+	return ctrl.Result{}, err
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *NginxOperatorReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&operatorv1alpha1.NginxOperator{}).
+		Owns(&appsv1.Deployment{}).
 		Complete(r)
 }

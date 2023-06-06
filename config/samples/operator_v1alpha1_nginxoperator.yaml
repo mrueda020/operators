@@ -10,3 +10,4 @@ metadata:
   name: nginxoperator-sample
 spec:
   # TODO(user): Add fields here
+  replicas: 5
